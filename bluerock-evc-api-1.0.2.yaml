@@ -1,0 +1,497 @@
+openapi: 3.0.3
+info:
+  title: BlueRock EVC API
+  version: "1.0.2"
+  description: |
+    The BlueRock EVC service allows BlueRock customers to validate CVE coverage.
+    
+    Use HTTP POST `/search` to submit either a `query` or `file` containing CVEs. The endpoint returns a subset of known, matching CVEs in a JSON array of objects along with a `job_id`. For any CVEs not immediately known by BlueRock, the endpoint automatically starts a "deep research" job to learn and understand the remaining CVEs.
+    
+    You can track the status of this job by performing an HTTP GET `/search?job_id=` with the corresponding `job_id`.
+    
+    For more information, see:
+    * [EVC API User Guide](https://evc.bluerock.io/evc-api) - To learn more about this API.
+    * [BlueRock Developer Portal](https://developers.bluerock.io) - To obtain API keys used in the `X-API-Key: <key>` header-based authentication.
+  license:
+    name: CC0 1.0 Universal (CC0 1.0)
+    url: https://creativecommons.org/publicdomain/zero/1.0/
+
+servers:
+  - url: https://api.bluerock.io/evc/1.0
+paths:
+  /search:
+    post:
+      summary: Submit a CVE search query and retrieve results.
+      operationId: searchCVE
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+                - query
+              properties:
+                type:
+                  type: string
+                  enum: [query, file]
+                  description: >
+                    Submission type. Use `query` for text submissions and `file` for file uploads.
+                query:
+                  type: string
+                  maxLength: 2000
+                  description: The text query. Required when `type` is `query`.
+                callback_url:
+                  type: string
+                  format: uri
+                  default: ""
+                  nullable: true
+                  description: |
+                    Optional callback URL sent by EVC as an HTTP POST to notify when processing is complete. Will contain `{"job_id": "the job ID", "status": "job status"}` as the HTTP body. Invalid URLs will be rejected.
+                callback_header:
+                  type: object
+                  nullable: true
+                  additionalProperties:
+                    type: string
+                  description: |
+                    Optional callback header to set when EVC sends callback (e.g., can be used to authenticate callbacks from EVC). Must be in the format of an object with key/value pairs. Malformed headers will be rejected.
+                  default: {}
+              example:
+                type: query
+                query: "CVE-2024-51378, CVE-2025-1094"
+                callback_url: "https://webhook.domain.com/path/to/callback"
+                callback_header:
+                  X-API-Key: "secretkey"
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - type
+                - file
+              properties:
+                type:
+                  type: string
+                  enum: [file]
+                  description: >
+                    Submission type. Use `query` for text submissions and `file` for file uploads.
+                file:
+                  type: string
+                  format: binary
+                  description: >
+                    The file to upload (max 9.5MB). Acceptable MIME types are: 
+                    `text/csv`, `text/html`, `text/javascript`, `text/plain`, `text/xml`, `application/json`.
+                callback_url:
+                  type: string
+                  format: uri
+                  default: ""
+                  nullable: true
+                  description: |
+                    Optional callback URL sent by EVC as an HTTP POST to notify when processing is complete. Will contain `{"job_id": "the job ID", "status": "job status"}` as the HTTP body. Invalid URLs will be rejected.
+                callback_header:
+                  type: object
+                  nullable: true
+                  additionalProperties:
+                    type: string
+                  description: |
+                    Optional callback header to set when EVC sends callback (e.g., can be used to authenticate callbacks from EVC). Must be in the format of an object with key/value pairs. Malformed headers will be rejected.
+                  default: {}
+              example:
+                type: file
+                callback_url: "https://webhook.domain.com/path/to/callback"
+                callback_header:
+                  X-API-Key: "secretkey"
+      responses:
+        '200':
+          description: Initial search results and deep research job status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: Retrieve the deep research job status by job_id.
+      operationId: getJobStatus
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: job_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The unique identifier for the deep research job.
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+          description: Number of items to return per page. Defaults to 10.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+          description: The starting position of the returned items in the overall result set. Defaults to 0.
+      responses:
+        '200':
+          description: Deep research job status and current response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        default:
+          description: An error occurred.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Header-based `X-API-Key` for authentication.
+  schemas:
+    SearchResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [done, running, rejected]
+          description: Current status of the deep research job.
+        job_id:
+          type: string
+          description: ID of the deep research job (only populated if running).
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the deep research job was created.
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the deep research job was last updated.
+        cves_found:
+          type: integer
+          description: Number of CVEs found in the original query.
+        cves_analyzed:
+          type: integer
+          description: Total number of CVEs analyzed so far.
+        cve_details:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: CVE ID.
+              name:
+                type: string
+                description: Name of the CVE.
+              description:
+                type: string
+                description: Description of the CVE.
+              vendor_project:
+                type: string
+                description: Name of the vendor(s).
+              product:
+                type: string
+                description: Name of the product(s).
+              expires_at:
+                type: string
+                format: date-time
+                description: |
+                  Record expiration date. Caching of this record is permitted until expires_at. Once expired, we recommend requerying the EVC API with this CVE to obtain updated coverage information.
+              cisa_kev_added_date:
+                type: string
+                format: date
+                description: Date when the CVE was added to CISA KEV (if known).
+              nvd_url:
+                type: string
+                format: uri
+                description: URL of the CVE on the NIST NVD website.
+              bluerock_coverage_status:
+                type: string
+                enum: [Yes, No, "Planned (Future Mechanism)"]
+                description: Indicates if the CVE is covered by BlueRock products.
+              bluerock_coverage_current:
+                type: string
+                description: >
+                  A multiline explanation of how BlueRock products address this CVE based on current mechanisms.
+              bluerock_coverage_future:
+                type: string
+                description: >
+                  A multiline explanation of how BlueRock products address this CVE based on current and future mechanisms.
+              cvss_version:
+                type: string
+                description: The version of the CVSS (Common Vulnerability Scoring System) used to evaluate the CVE.
+              cvss_base_score:
+                type: string
+                description: The CVSS base score, representing the severity of the CVE on a scale typically from 0 to 10.
+              cvss_base_severity:
+                type: string
+                description: The CVSS base severity rating (e.g., LOW, MEDIUM, HIGH, CRITICAL) derived from the base score.
+              guardrail_categories:
+                type: array
+                items:
+                  type: string
+                description: >
+                  List of applicable BlueRock guardrail categories corresponding to the subset of BlueRock mechanisms that cover this CVE (either as "Yes" or "Planned (Future Mechanism)").
+              evc_url:
+                type: string
+                format: uri
+                description: Deep link of the CVE into the EVC Portal.
+        callback_last_sent_at:
+          type: string
+          format: date-time
+          description: Timestamp when the callback URL was last successfully sent (if callback specified).
+        callback_status:
+          type: string
+          enum: [success, failed, invalid_callback]
+          description: |
+            Status of last callback attempt (if callback specified). `invalid_callback`s are rejected due to malformed URLs or headers. `failed` callbacks will be retried up to 5 times before giving up.
+        callback_count:
+          type: integer
+          default: 0
+          minimum: 0
+          maximum: 5
+          description: Current number of attempts to contact the callback URL (if callback specified).
+        total_pages:
+          type: integer
+          description: Total number of pages available.
+        page_size:
+          type: integer
+          description: The number of items per page.
+        offset:
+          type: integer
+          description: The offset of the current page within the result set.
+        next_offset:
+          type: integer
+          nullable: true
+          description: The next offset to use based on current `offset` and `page_size`. Set to `null` when on last page.
+      example:
+        job_id: recFCMjjjS3MvPNw1
+        status: running
+        created_at: "2025-03-24T21:09:15.000Z"
+        updated_at: "2025-03-24T21:09:24.000Z"
+        cves_found: 30
+        cves_analyzed: 30
+        cve_details:
+          - id: CVE-2023-38472
+            name: Avahi avahi_rdata_parse() Reachable Assertion Vulnerability
+            description: A vulnerability was found in Avahi. A reachable assertion exists in the avahi_rdata_parse() function.
+            vendor_project: "Avahi, Red Hat"
+            product: "Avahi, Enterprise Linux"
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2023-38472"
+            bluerock_coverage_status: "No"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: "BlueRock does not protect against this CVE at this time."
+            expires_at: "2025-06-22T21:09:25.424Z"
+            cvss_version: "3.1"
+            cvss_base_score: "6.2"
+            cvss_base_severity: "MEDIUM"
+            guardrail_categories: []
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec0a6su1gzg07skB" 
+          - id: CVE-2021-3468
+            name: Avahi Infinite Loop Vulnerability in Client Connection Handling
+            description: A flaw was found in avahi in versions 0.6 up to 0.8. The event used to signal termination of the client connection is not correctly handled.
+            vendor_project: Avahi
+            product: Avahi
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2021-3468"
+            bluerock_coverage_status: "No"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: "BlueRock does not protect against this CVE at this time."
+            expires_at: "2025-06-22T21:09:25.423Z"
+            cvss_version: "0"
+            cvss_base_score: "0"
+            cvss_base_severity: "UNKNOWN"
+            guardrail_categories: []
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec1S3H2dD79m7syg"
+          - id: CVE-2025-25724
+            name: Denial of Service in libarchive via Crafted TAR Archive with Verbose Value
+            description: list_item_verbose in tar/util.c in libarchive through 3.7.7 does not check an strftime return value, which can lead to a denial of service.
+            vendor_project: libarchive
+            product: libarchive
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2025-25724"
+            bluerock_coverage_status: "No"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: "BlueRock does not protect against this CVE at this time."
+            expires_at: "2025-06-22T21:09:25.421Z"
+            cvss_version: "3.1"
+            cvss_base_score: "4"
+            cvss_base_severity: "MEDIUM"
+            guardrail_categories: []
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec1XdzXBVQ1mPRok"
+          - id: CVE-2025-27113
+            name: libxml2 NULL Pointer Dereference Vulnerability in xmlPatMatch
+            description: libxml2 before 2.12.10 and 2.13.x before 2.13.6 has a NULL pointer dereference in xmlPatMatch.
+            vendor_project: GNOME
+            product: libxml2
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2025-27113"
+            bluerock_coverage_status: "No"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: "BlueRock does not protect against this CVE at this time."
+            expires_at: "2025-06-22T21:09:25.419Z"
+            cvss_version: "3.1"
+            cvss_base_score: "2.9"
+            cvss_base_severity: "LOW"
+            guardrail_categories: []
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec2qkFnH60QGebmu"
+          - id: CVE-2023-48795
+            name: >-
+              Terrapin Attack: SSH Protocol Integrity Bypass in Multiple Products
+            description: >-
+              The SSH transport protocol with certain OpenSSH extensions allows remote attackers to bypass integrity checks, leading to potential security downgrades.
+            vendor_project: "OpenBSD, PuTTY, FileZilla Project, Microsoft, Panic, Roumen Petrov, WinSCP, Bitvise, LANCOM Systems, VanDyke, libssh, Net-SSH, SSH2 Project, ProFTPD, FreeBSD, Crates, Tera Term Project, Oryx Embedded, CrushFTP, NetSarang, Paramiko, Red Hat, Golang, Russh Project, SFTPGo Project, Erlang, Matez, Libssh2, AsyncSSH Project, Dropbear SSH Project, Jadaptive, SSH, Thorn Tech, Netgate, ConnectBot, Apache, TinySSH, Trilead, 9bis, Gentoo, Fedora Project, Debian, Apple"
+            product: "OpenSSH, PuTTY, FileZilla Client, PowerShell, Transmit, Nova, PKIX-SSH, WinSCP, SSH Client, SSH Server, LCOS, LANconfig, SecureCRT, libssh, net-ssh, SSH2, ProFTPD, FreeBSD, Thrussh, Tera Term, CycloneSSH, CrushFTP, XShell, Paramiko, OpenShift Container Platform, OpenStack Platform, Ceph Storage, Enterprise Linux, OpenShift Serverless, OpenShift GitOps, OpenShift Pipelines, OpenShift Developer Tools and Services, OpenShift Data Foundation, OpenShift API for Data Protection, OpenShift Virtualization, Storage, Discovery, OpenShift Dev Spaces, Cert-Manager Operator for Red Hat OpenShift, Keycloak, JBoss Enterprise Application Platform, Single Sign-On, Advanced Cluster Security, Crypto, Russh, SFTPGo, Erlang/OTP, Jsch, Libssh2, AsyncSSH, Dropbear SSH, Maverick Synergy Java SSH API, SFTP Gateway, pfSense Plus, pfSense CE, ConnectBot SSH Library, SSHD, SSHJ, TinySSH, Trilead SSH2, KiTTY, Security, Fedora, Debian Linux, macOS"
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2023-48795"
+            bluerock_coverage_status: "Planned (Future Mechanism)"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: >-
+              The CVE-2023-48795 describes a vulnerability in the SSH transport protocol that allows attackers to bypass integrity checks. The BlueRock mechanism 'SSH Deep Auth & SSH Least Privilege' is applicable to address this issue.
+            expires_at: "2025-06-22T21:09:25.418Z"
+            cvss_version: "3.1"
+            cvss_base_score: "5.9"
+            cvss_base_severity: "MEDIUM"
+            guardrail_categories:
+              - Application
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec33ppiDFi6ILNxk"
+          - id: CVE-2023-38473
+            name: Avahi Reachable Assertion Vulnerability in avahi_alternative_host_name Function
+            description: A vulnerability was found in Avahi. A reachable assertion exists in the avahi_alternative_host_name() function.
+            vendor_project: "Avahi, Red Hat"
+            product: "Avahi, Enterprise Linux"
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2023-38473"
+            bluerock_coverage_status: "No"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: "BlueRock does not protect against this CVE at this time."
+            expires_at: "2025-06-22T21:09:25.416Z"
+            cvss_version: "3.1"
+            cvss_base_score: "6.2"
+            cvss_base_severity: "MEDIUM"
+            guardrail_categories: []
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec3ggb5q0oAzdgMI"
+          - id: CVE-2022-3219
+            name: GnuPG Vulnerability Allows Denial of Service via Crafted Public Key with Multiple Signatures
+            description: GnuPG can be made to spin on a small input by crafting a public key with thousands of signatures.
+            vendor_project: GnuPG
+            product: GnuPG
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2022-3219"
+            bluerock_coverage_status: "No"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: "BlueRock does not protect against this CVE at this time."
+            expires_at: "2025-06-22T21:09:25.414Z"
+            cvss_version: "3.1"
+            cvss_base_score: "3.3"
+            cvss_base_severity: "LOW"
+            guardrail_categories: []
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec4INbWv4hV6UhMJ"
+          - id: CVE-2024-10041
+            name: Linux-PAM Speculative Execution Vulnerability Leading to Password Leakage
+            description: A vulnerability in PAM that may leak passwords during authentication due to speculative execution.
+            vendor_project: "Linux-PAM, Red Hat"
+            product: "Linux-PAM, Enterprise Linux"
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2024-10041"
+            bluerock_coverage_status: "Planned (Future Mechanism)"
+            bluerock_coverage_current: "BlueRock does not protect against this CVE at this time."
+            bluerock_coverage_future: >-
+              The CVE-2024-10041 involves speculative execution leading to password leakage, partially mitigated by Linux/Host Drift Protection.
+            expires_at: "2025-06-22T21:09:25.413Z"
+            cvss_version: "3.1"
+            cvss_base_score: "4.7"
+            cvss_base_severity: "MEDIUM"
+            guardrail_categories:
+              - "Linux/Host"
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec68sR9pzmfx8KCA"
+          - id: CVE-2024-50349
+            name: Git Terminal Credential Prompt ANSI Escape Sequence Vulnerability
+            description: >-
+              Git's terminal credential prompt may render URL-decoded ANSI escape sequences, confusing users and potentially capturing sensitive credentials.
+            vendor_project: Git
+            product: Git
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2024-50349"
+            bluerock_coverage_status: "Yes"
+            bluerock_coverage_current: >-
+              The CVE can be partially mitigated by BlueRock using mechanisms like File Operations Protection, Reverse Shell Protection, Linux/Host Drift Protection, and Process Runtime Execution Guardrails.
+            bluerock_coverage_future: >-
+              The mitigation involves similar mechanisms as in the current response, enforcing guardrails against unauthorized process execution.
+            expires_at: "2025-06-22T21:09:25.411Z"
+            cvss_version: "4"
+            cvss_base_score: "2.1"
+            cvss_base_severity: "LOW"
+            guardrail_categories:
+              - "Linux/Host"
+              - "Application"
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec7bvcd7gCHw8k4J"
+          - id: CVE-2023-37769
+            name: Pixman FPE Vulnerability in combine_inner Component
+            description: >-
+              A Floating Point Exception vulnerability in Pixman that can lead to Denial of Service.
+            vendor_project: Pixman
+            product: Pixman
+            cisa_kev_added_date: null
+            nvd_url: "https://nvd.nist.gov/vuln/detail/CVE-2023-37769"
+            bluerock_coverage_status: "Yes"
+            bluerock_coverage_current: >-
+              The vulnerability involves a Floating Point Exception which may lead to DoS; mitigations include Kernel Integrity Protection and Process Runtime Execution Guardrails.
+            bluerock_coverage_future: >-
+              The same mechanisms are expected to mitigate future risks associated with this vulnerability.
+            expires_at: "2025-06-22T21:09:25.409Z"
+            cvss_version: "3.1"
+            cvss_base_score: "6.5"
+            cvss_base_severity: "MEDIUM"
+            guardrail_categories:
+              - "Linux/Host"
+              - "Application"
+            evc_url: "https://airtable.com/app75PqfZCBCTirXT/pagTt8cSM9MtyCRh3?xGIMk=rec8f728Sd3qaXAKr"
+        callback_last_sent_at: null
+        callback_status: null
+        callback_count: 0
+        total_pages: 3
+        page_size: 10
+        offset: 0
+        next_offset: 10
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          description: HTTP error code.
+        message:
+          type: string
+          description: HTTP error message.
+        errors:
+          type: array
+          description: Explanation of why error occurred.
+          items:
+            type: string
+      example:
+        code: 503
+        message: "Service Unavailable"
+        errors:
+          - "The server is temporarily unable to handle the request"
+          - "Please try again after two minutes"
